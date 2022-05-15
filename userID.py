@@ -9,8 +9,8 @@ try:
     headers = {'Client-Id': sys.argv[2], 'Authorization': 'Bearer '+sys.argv[3]}
     req = requests.get(URL, headers=headers, timeout=15)
     req.raise_for_status()
-    data = req.json()
-    print(data['data'][0]['id'])
+    jData = req.json()
+    print(jData['data'][0]['id'])
 except requests.exceptions.ConnectionError as cone:
         print("Connection Error:", cone)
 except requests.exceptions.Timeout as et:
