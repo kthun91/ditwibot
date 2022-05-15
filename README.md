@@ -3,7 +3,8 @@ ditwibot -> Discord-Twitch-Bot
 Self-hosting bot that posts messages in discord channel automatically.
 To start Bot on your server in background:
 ```nohup python ditwibot.py TWITCH_CHANNEL TWITCH_CHANNEL_ID TWITCH_CLIENT_ID TWITCH_SECRET DISCORD_WEBHOOK_ID DISCORD_WEBHOOK_TOKEN </dev/null &>/dev/null &```
-
+## Requirement
+You have to install Discord.py. I recommend using pip. For example: ```python3 -m pip install discord.py```
 
 # ditwibot
 Checks if twitch stream is online via Twitch API. Tokens available at https://dev.twitch.tv/console
