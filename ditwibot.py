@@ -21,7 +21,7 @@ TWITCH_CHANNEL_ID = sys.argv[2]
 
 TWITCH_USER_URL = 'https://api.twitch.tv/helix/streams?user_id='
 
-TIME_INTERVAL = 5 # script executed every x seconds
+TIME_INTERVAL = 60 # script executed every x seconds
 RECENT_STATE = 1 # initial state
 
 def get_access_token():
