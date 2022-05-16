@@ -13,7 +13,7 @@ DISCORD_WEBHOOK_TOKEN = sys.argv[6]
 # twitch api from oauthToken.py
 TWITCH_CLIENT_ID = sys.argv[3]
 TWITCH_OAUTH_TOKEN = '' # will expire after 60 days -- will be generated anyway
-TWITCH_SECRET = sys.argv[4]
+TWITCH_SECRET = sys.argv[4] # do not share!
 
 # twitch channel and user_id from userID.py
 TWITCH_CHANNEL = sys.argv[1]
@@ -75,9 +75,8 @@ def getInfos(twitch_channel_id):
     return infos
 
 while True:
-    status = isOnline(TWITCH_CHANNEL_ID) # mit if weiter, da 0: online und 1: offline, >2: true
-    # print(status)
-    # time.sleep(5)
+    time.sleep(TIME_INTERVAL)
+    status = isOnline(TWITCH_CHANNEL_ID)
     if not status and RECENT_STATE:
         infos = getInfos(TWITCH_CHANNEL_ID)
         webhook = Webhook.partial(DISCORD_WEBHOOK_ID, DISCORD_WEBHOOK_TOKEN, adapter=RequestsWebhookAdapter())
@@ -87,4 +86,3 @@ while True:
         continue
     else:
         RECENT_STATE = 1
-    time.sleep(TIME_INTERVAL)
