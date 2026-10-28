@@ -97,7 +97,7 @@ def get_stream():
 
 def send_discord(text):
     r = requests.post(
-        f"https://discord.com/api/webhooks/{DISCORD_WEBHOOK_ID}/{DISCORD_WEBHOOK_TOKEN}",
+        f"https://discord.com/api/v10/webhooks/{DISCORD_WEBHOOK_ID}/{DISCORD_WEBHOOK_TOKEN}",
         json={"content": text},
         timeout=TIMEOUT,
     )
