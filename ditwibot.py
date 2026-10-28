@@ -1,88 +1,147 @@
 #!/usr/bin/env python3
-# python ditwibot.py TWITCH_CHANNEL TWITCH_CHANNEL_ID TWITCH_CLIENT_ID TWITCH_SECRET DISCORD_WEBHOOK_ID DISCORD_WEBHOOK_TOKEN
-import sys
-import time
+"""Meldet in Discord, wenn ein Twitch-Kanal live geht.
+Konfiguration über Umgebungsvariablen (siehe .env.example)."""
 import json
+import os
+import time
+import traceback
+from datetime import datetime
+
 import requests
-from discord import Webhook, RequestsWebhookAdapter
 
-# Discord
-DISCORD_WEBHOOK_ID = sys.argv[5]
-DISCORD_WEBHOOK_TOKEN = sys.argv[6]
 
-# twitch api from oauthToken.py
-TWITCH_CLIENT_ID = sys.argv[3]
-TWITCH_OAUTH_TOKEN = '' # will expire after 60 days -- will be generated anyway
-TWITCH_SECRET = sys.argv[4] # do not share!
+def env(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"{name} ist nicht gesetzt (siehe .env.example).")
+    return value
 
-# twitch channel and user_id from userID.py
-TWITCH_CHANNEL = sys.argv[1]
-TWITCH_CHANNEL_ID = sys.argv[2]
 
-TWITCH_USER_URL = 'https://api.twitch.tv/helix/streams?user_id='
+TWITCH_CHANNEL = env("TWITCH_CHANNEL")
+TWITCH_CHANNEL_ID = env("TWITCH_CHANNEL_ID")
+TWITCH_CLIENT_ID = env("TWITCH_CLIENT_ID")
+TWITCH_SECRET = env("TWITCH_SECRET")
+DISCORD_WEBHOOK_ID = env("DISCORD_WEBHOOK_ID")
+DISCORD_WEBHOOK_TOKEN = env("DISCORD_WEBHOOK_TOKEN")
 
-TIME_INTERVAL = 60 # script executed every x seconds
-RECENT_STATE = 1 # initial state
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+STATE_FILE = os.path.join(DATA_DIR, "state.json")
+TIME_INTERVAL = 60  # Sekunden zwischen zwei Abfragen
+TIMEOUT = 15  # Sekunden – verhindert endloses Hängen
 
-def get_access_token():
-    req = requests.post(f"https://id.twitch.tv/oauth2/token?client_id={TWITCH_CLIENT_ID}&client_secret={TWITCH_SECRET}&grant_type=client_credentials")
-    return json.loads(req.text)["access_token"]
+access_token = None
 
-def isOnline(twitch_channel_id):
-    global TWITCH_OAUTH_TOKEN
-    jData = None
-    status = 1
+
+def log(msg):
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}", flush=True)
+
+
+def redact(text):
+    """Geheimnisse aus Fehlermeldungen entfernen."""
+    text = str(text)
+    for secret in (TWITCH_SECRET, DISCORD_WEBHOOK_TOKEN, access_token):
+        if secret:
+            text = text.replace(secret, "***")
+    return text
+
+
+def load_state():
     try:
-        r = requests.get(TWITCH_USER_URL+twitch_channel_id, headers={"Client-Id": TWITCH_CLIENT_ID, "Authorization": TWITCH_OAUTH_TOKEN}, timeout=15)
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save_state(state):
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
+
+
+def refresh_access_token():
+    global access_token
+    r = requests.post(
+        "https://id.twitch.tv/oauth2/token",
+        data={
+            "client_id": TWITCH_CLIENT_ID,
+            "client_secret": TWITCH_SECRET,
+            "grant_type": "client_credentials",
+        },
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    access_token = r.json()["access_token"]
+    log("Neues Twitch-Token geholt.")
+
+
+def get_stream():
+    """Stream-Daten, wenn der Kanal live ist, sonst None. Wirft bei Fehlern."""
+    if access_token is None:
+        refresh_access_token()
+    for attempt in range(2):
+        r = requests.get(
+            "https://api.twitch.tv/helix/streams",
+            params={"user_id": TWITCH_CHANNEL_ID},
+            headers={"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {access_token}"},
+            timeout=TIMEOUT,
+        )
+        if r.status_code == 401 and attempt == 0:
+            refresh_access_token()  # Token abgelaufen -> neu holen, einmal wiederholen
+            continue
         r.raise_for_status()
-        jData = r.json()
-        if jData['data'] == []:
-            status = 1 # offline
-        else:
-            status = 0 # online
-    except requests.exceptions.ConnectionError as cone:
-        print("Connection Error:", cone)
-    except requests.exceptions.Timeout as et:
-        print("Timeout Error:", et)
-    except requests.exceptions.RequestException as re:
-        if "401" in str(re):
-            TWITCH_OAUTH_TOKEN = 'Bearer '+get_access_token() # new token generation after old expired
-        if re.response:
-            if re.response.reason == 'Not Found' or re.response.reason == 'Unprocessable Entity':
-                status = 2 # no streamer found
-        print("Error message:", re)
-    return status
+        data = r.json().get("data", [])
+        return data[0] if data else None
 
-def gameIdToGame(gameID):
-    req = requests.get('https://api.twitch.tv/helix/games?id='+gameID, headers={"Client-ID": TWITCH_CLIENT_ID, "Authorization": TWITCH_OAUTH_TOKEN}, timeout=15)
-    return json.loads(req.text)['data'][0]['name']
 
-def getInfos(twitch_channel_id):
-    infos = {'title':'', 'gameTitle':''}
-    jData = None
-    try:
-        r = requests.get(TWITCH_USER_URL+twitch_channel_id, headers={"Client-Id": TWITCH_CLIENT_ID, "Authorization": TWITCH_OAUTH_TOKEN}, timeout=15)
-        r.raise_for_status()
-        jData = r.json()
-    except requests.exceptions.ConnectionError as cone:
-        print("Connection Error:", cone)
-    except requests.exceptions.Timeout as et:
-        print("Timeout Error:", et)
-    except requests.exceptions.RequestException as re:
-        print("Error message:", re)
-    infos['title'] = jData['data'][0]['title']
-    infos['gameTitle'] = gameIdToGame(jData['data'][0]['game_id'])
-    return infos
+def send_discord(text):
+    r = requests.post(
+        f"https://discord.com/api/webhooks/{DISCORD_WEBHOOK_ID}/{DISCORD_WEBHOOK_TOKEN}",
+        json={"content": text},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
 
-while True:
-    time.sleep(TIME_INTERVAL)
-    status = isOnline(TWITCH_CHANNEL_ID)
-    if not status and RECENT_STATE:
-        infos = getInfos(TWITCH_CHANNEL_ID)
-        webhook = Webhook.partial(DISCORD_WEBHOOK_ID, DISCORD_WEBHOOK_TOKEN, adapter=RequestsWebhookAdapter())
-        webhook.send("I am live! Come watch me at : https://twitch.tv/"+TWITCH_CHANNEL +"\nTitle : "+infos['title']+"\nPlaying : "+infos['gameTitle'])
-        RECENT_STATE = 0
-    elif not (status or RECENT_STATE):
-        continue
-    else:
-        RECENT_STATE = 1
+
+def check(state):
+    stream = get_stream()
+    if stream is None:
+        if state.get("live"):
+            log("Stream offline.")
+            state["live"] = False
+            save_state(state)
+        return
+
+    # Jeder Stream hat eine eigene ID -> nur einmal pro Stream melden,
+    # auch nach Fehlern oder einem Neustart des Containers.
+    if stream["id"] == state.get("announced_stream_id"):
+        return
+
+    title = stream.get("title", "")
+    game = stream.get("game_name", "")
+    log(f"Live: {title} ({game})")
+    send_discord(
+        "I am live! Come watch me at : https://twitch.tv/" + TWITCH_CHANNEL
+        + "\nTitle : " + title
+        + "\nPlaying : " + game
+    )
+    state.update(live=True, announced_stream_id=stream["id"])
+    save_state(state)
+    log("In Discord gemeldet.")
+
+
+def main():
+    log(f"twBot gestartet: Kanal {TWITCH_CHANNEL}, Intervall {TIME_INTERVAL} s")
+    state = load_state()
+    while True:
+        try:
+            check(state)
+        except Exception:
+            log("Fehler – nächster Versuch im normalen Intervall:")
+            print(redact(traceback.format_exc()), flush=True)
+        time.sleep(TIME_INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

@@ -128,3 +128,7 @@ nohup.out
 
 # Pyre type checker
 .pyre/
+
+# Geheimnisse & Laufzeitdaten
+.env
+data/

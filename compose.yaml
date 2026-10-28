@@ -1,0 +1,17 @@
+services:
+  twbot:
+    build: .
+    image: twbot:local
+    container_name: twbot
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
